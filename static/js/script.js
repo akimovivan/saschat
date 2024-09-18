@@ -1,10 +1,11 @@
 "use strict";
 
+const wsURL = "ws://your-ip-address:8080/ws"
 window.onload = function() {
     const input = document.getElementById("message");
     const output = document.getElementById("chatWindow");
     const username = document.getElementById("username").innerHTML;
-    const socket = new WebSocket("ws://192.168.10.151:8080/ws");
+    const socket = new WebSocket(wsURL);
 
     socket.onopen = function () {
         output.innerHTML += "Status: Connected\n";
@@ -28,19 +29,4 @@ window.onload = function() {
         input.value = "";
 
     });
-}
-
-async function getMessage(ws) {
-    const url = "ws://192.168.10.151:8080/ws";
-    try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Response status: ${response.status}`);
-        }
-
-        const json = await response.json();
-        console.log(json);
-    } catch (error) {
-        console.error(error.message)
-    }
 }

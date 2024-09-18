@@ -14,17 +14,14 @@ import (
 )
 
 // caching templates
-var templates = template.Must(template.ParseGlob("templates/*.html"))
-
-var store = sessions.NewCookieStore([]byte("super-secret-key"))
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
-
 var (
+	templates = template.Must(template.ParseGlob("templates/*.html"))
+	store     = sessions.NewCookieStore([]byte("super-secret-key"))
+	upgrader  = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
 	clients   = make(map[*websocket.Conn]bool)
 	broadcast = make(chan Message)
 )
@@ -160,8 +157,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 			return
 		}
 	}
-	err := templates.ExecuteTemplate(w, "registration.html", nil)
-	if err != nil {
+	if err := templates.ExecuteTemplate(w, "registration.html", nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		log.Fatal(err)
 	}
@@ -183,6 +179,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("Entered as:", username)
 	if err = templates.ExecuteTemplate(w, "chat.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Println(err)
 	}
 }
 
@@ -230,6 +227,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
+	initDatabase(db)
 
 	fs := http.FileServer(http.Dir("static/"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))

@@ -10,15 +10,23 @@
 </head>
 
 <body>
+    <div>
+        {{if eq .Username "anon"}}
+        <a href="/login">login</a>
+        <a href="/register">register</a>
+        {{else}}
+        <a href="/logout">Logout</a>
+        {{end}}
+    </div>
     <h1>Chat</h1>
     <p style="display: none" id="username">{{.Username}}</p>
     <div id="chatWindow">
     </div>
-    <div id="messageBox">
+    <form id="messageBox">
         <label for="message">Message: </label>
         <input type="text" id="message" name="message">
         <button id="sendButton">Send</button>
-    </div>
+    </form>
 </body>
 
 </html>
