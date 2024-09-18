@@ -8,15 +8,26 @@ import (
 
 	"github.com/gorilla/sessions"
 	_ "github.com/gorilla/sessions"
+	"github.com/gorilla/websocket"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
-	_ "golang.org/x/crypto/bcrypt"
 )
 
 // caching templates
 var templates = template.Must(template.ParseGlob("templates/*.html"))
 
 var store = sessions.NewCookieStore([]byte("super-secret-key"))
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+var (
+	clients   = make(map[*websocket.Conn]bool)
+	broadcast = make(chan Message)
+)
 
 const (
 	file     string = "users.db"
@@ -28,23 +39,18 @@ const (
         );`
 )
 
-type User struct {
-	ID       int
-	username string
-	password string
+type Message struct {
+	Username string `json:"username"`
+	Message  string `json:"message"`
 }
 
-type UsersDbRow struct {
-	ID int
-	User
+type User struct {
+	ID       int
+	Username string
+	Password string
 }
 
 func initDatabase(db *sql.DB) {
-	db, err := sql.Open("sqlite3", file)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
 	res, err := db.Exec(createDb)
 	if err != nil {
 		log.Fatal(err)
@@ -57,7 +63,7 @@ func (user User) add(db *sql.DB) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if _, err := stmt.Exec(user.username, user.password); err != nil {
+	if _, err := stmt.Exec(user.Username, user.Password); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -73,14 +79,14 @@ func (user User) delete(db *sql.DB) {
 }
 
 func (user *User) getById(id int, db *sql.DB) {
-	err := db.QueryRow("SELECT id, username, password FROM users WHERE id = ?;", id).Scan(&user.ID, &user.username, &user.password)
+	err := db.QueryRow("SELECT id, username, password FROM users WHERE id = ?;", id).Scan(&user.ID, &user.Username, &user.Password)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
 func (user *User) get(username string, db *sql.DB) {
-	err := db.QueryRow("SELECT id, username, password FROM users WHERE username = ?;", username).Scan(&user.ID, &user.username, &user.password)
+	err := db.QueryRow("SELECT id, username, password FROM users WHERE username = ?;", username).Scan(&user.ID, &user.Username, &user.Password)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -107,12 +113,12 @@ func loginHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		username := r.FormValue("username")
 		password := r.FormValue("password")
 		user.get(username, db)
-		ok := checkPasswordHash(password, user.password)
+		ok := checkPasswordHash(password, user.Password)
 		if !ok {
 			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
-		session.Values["username"] = user.username
+		session.Values["username"] = user.Username
 		session.Save(r, w)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
@@ -142,8 +148,8 @@ func registerHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		password1 := r.FormValue("password1")
 		password2 := r.FormValue("password2")
 		if password1 == password2 {
-			user.username = username
-			user.password, err = hashPassword(password1)
+			user.Username = username
+			user.Password, err = hashPassword(password1)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				log.Fatal(err)
@@ -168,13 +174,53 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		log.Fatal(err)
 	}
 	username, ok := session.Values["username"].(string)
-	if !ok {
-		username = "anon"
+	var data User
+	if ok {
+		data.Username = username
+	} else {
+		data.Username = "anon"
 	}
-	log.Println(username)
-	err = templates.ExecuteTemplate(w, "chat.html", nil)
-	if err != nil {
+	log.Println("Entered as:", username)
+	if err = templates.ExecuteTemplate(w, "chat.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func connectionHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer conn.Close()
+
+	clients[conn] = true
+
+	for {
+		var msg Message
+		err := conn.ReadJSON(&msg)
+		if err != nil {
+			log.Println(err)
+			delete(clients, conn)
+			return
+		}
+		broadcast <- msg
+
+	}
+}
+
+func handleMessages() {
+	for {
+		msg := <-broadcast
+
+		for client := range clients {
+			err := client.WriteJSON(msg)
+			if err != nil {
+				log.Println(err)
+				client.Close()
+				delete(clients, client)
+			}
+		}
 	}
 }
 
@@ -185,6 +231,10 @@ func main() {
 	}
 	defer db.Close()
 
+	fs := http.FileServer(http.Dir("static/"))
+	http.Handle("/static/", http.StripPrefix("/static/", fs))
+	http.HandleFunc("/ws", connectionHandler)
+	go handleMessages()
 	http.HandleFunc("/", chatHandler)
 	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		loginHandler(w, r, db)
