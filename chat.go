@@ -7,7 +7,6 @@ import (
 	"text/template"
 
 	"github.com/gorilla/sessions"
-	_ "github.com/gorilla/sessions"
 	"github.com/gorilla/websocket"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"

@@ -1,4 +1,4 @@
-module saschat
+module github.com/akimovivan/saschat
 
 go 1.22.7
 
