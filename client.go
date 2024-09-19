@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 
 	"github.com/gorilla/websocket"
 )
+
+var chatHistory = make(map[string][]Message)
 
 type client struct {
 	socket  *websocket.Conn
@@ -18,7 +21,11 @@ func (c *client) read() {
 		_, msg, err := c.socket.ReadMessage()
 		if err != nil {
 			log.Println(err)
+			return
 		}
+		var mesg Message
+		json.Unmarshal(msg, &mesg)
+		chatHistory[c.room.name] = append(chatHistory[c.room.name], mesg)
 		c.room.forward <- msg
 	}
 }

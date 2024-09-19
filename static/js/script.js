@@ -3,7 +3,7 @@
 const wsURL = "ws://192.168.10.151:8080/ws/"
 window.onload = function() {
     const input = document.getElementById("message");
-    const chatName = document.getElementById("chatTitle").innerHTML
+    const chatName = document.getElementById("chatTitle").innerHTML;
     const output = document.getElementById("chatWindow");
     const username = document.getElementById("username").innerHTML;
     const socket = new WebSocket(wsURL+chatName);
@@ -31,3 +31,4 @@ window.onload = function() {
 
     });
 }
+

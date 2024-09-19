@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"text/template"
+	"time"
 
 	"github.com/gorilla/sessions"
 )
@@ -53,6 +54,9 @@ func homePageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Println(Rooms)
+	for _, value := range Rooms {
+		log.Println(value.clients)
+	}
 	data := make(map[string]interface{})
 	if _, ok := session.Values["username"].(string); !ok {
 		data["Authenticated"] = false
@@ -89,15 +93,27 @@ func chatHandler(w http.ResponseWriter, req *http.Request, name string) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		log.Fatal(err)
 	}
+
 	if _, ok := session.Values["username"].(string); !ok {
 		data["Username"] = "AnonymousUser"
 	} else {
 		data["Username"] = session.Values["username"]
 	}
+
+	data["History"] = chatHistory[name]
+
 	log.Println("Entered as:", session.Values["username"])
 	log.Println("Trying to access chat: ", name)
+
 	data["ChatTitle"] = name
 
+	go func() {
+		time.Sleep(10 * time.Second)
+		r := Rooms[name]
+		delete(Rooms, name)
+		delete(chatHistory, name)
+		r.done <- 1
+	}()
 	if err := templates.ExecuteTemplate(w, "chat.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		log.Println(err)
@@ -111,7 +127,7 @@ func roomCreationHandler(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, "Invalid name", http.StatusUnprocessableEntity)
 			return
 		}
-		r := newRoom()
+		r := newRoom(name)
 		log.Println("Created new room")
 		Rooms[name] = r
 		go r.run()

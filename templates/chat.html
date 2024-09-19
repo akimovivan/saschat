@@ -13,6 +13,10 @@
     <p style="display: none" id="username">{{.Username}}</p>
     <h1 id="chatTitle">{{.ChatTitle}}</h1>
     <div id="chatWindow">
+        {{range .History}}
+        {{.Username}}: {{.Message}}
+        <br>
+        {{end}}
     </div>
     <form id="messageBox">
         <label for="message">Message: </label>
