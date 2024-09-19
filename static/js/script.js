@@ -1,11 +1,12 @@
 "use strict";
 
-const wsURL = "ws://your-ip-address:8080/ws"
+const wsURL = "ws://192.168.10.151:8080/ws/"
 window.onload = function() {
     const input = document.getElementById("message");
+    const chatName = document.getElementById("chatTitle").innerHTML
     const output = document.getElementById("chatWindow");
     const username = document.getElementById("username").innerHTML;
-    const socket = new WebSocket(wsURL);
+    const socket = new WebSocket(wsURL+chatName);
 
     socket.onopen = function () {
         output.innerHTML += "Status: Connected\n";

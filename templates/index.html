@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <title>Home</title>
+</head>
+
+<body>
+    {{if .Authenticated}}
+    <a href="/logout">Logout</a>
+    {{else}}
+    <form method="POST">
+        <label for="username">Enter as:</label>
+        <input type="text" id="username" name="username" required>
+        <br>
+        <button type="submit">Enter</button>
+    </form>
+    {{end}}
+    <h1>Chats</h1>
+    <form method="POST" action="/create">
+        <label for="chatName">Enter chat name:</label>
+        <input type="text" id="chatName" name="chatName">
+        <br>
+        <button type="submit">Create</button>
+    </form>
+    <ul>
+        {{range .Rooms}}
+        <li><a href="/chat/{{.}}">{{.}} chat.</a></li>
+        {{end}}
+    </ul>
+</body>
+
+</html>

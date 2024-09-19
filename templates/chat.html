@@ -10,16 +10,8 @@
 </head>
 
 <body>
-    <div>
-        {{if eq .Username "anon"}}
-        <a href="/login">login</a>
-        <a href="/register">register</a>
-        {{else}}
-        <a href="/logout">Logout</a>
-        {{end}}
-    </div>
-    <h1>Chat</h1>
     <p style="display: none" id="username">{{.Username}}</p>
+    <h1 id="chatTitle">{{.ChatTitle}}</h1>
     <div id="chatWindow">
     </div>
     <form id="messageBox">
@@ -27,6 +19,7 @@
         <input type="text" id="message" name="message">
         <button id="sendButton">Send</button>
     </form>
+    <div><a href="/">Go back</a></div>
 </body>
 
 </html>

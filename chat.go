@@ -1,38 +1,20 @@
 package main
 
 import (
-	"database/sql"
 	"log"
 	"net/http"
+	"regexp"
 	"text/template"
 
 	"github.com/gorilla/sessions"
-	"github.com/gorilla/websocket"
-	_ "github.com/mattn/go-sqlite3"
-	"golang.org/x/crypto/bcrypt"
 )
 
-// caching templates
 var (
 	templates = template.Must(template.ParseGlob("templates/*.html"))
 	store     = sessions.NewCookieStore([]byte("super-secret-key"))
-	upgrader  = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-	}
-	clients   = make(map[*websocket.Conn]bool)
-	broadcast = make(chan Message)
-)
-
-const (
-	file     string = "users.db"
-	createDb string = `
-        CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL,
-        password TEXT NOT NULL
-        );`
+	validPath = regexp.MustCompile("^/(chat|ws)/([a-zA-Z0-9]+)$")
+	Rooms     = make(map[string]*room)
+	validName = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
 )
 
 type Message struct {
@@ -40,88 +22,51 @@ type Message struct {
 	Message  string `json:"message"`
 }
 
-type User struct {
-	ID       int
-	Username string
-	Password string
-}
-
-func initDatabase(db *sql.DB) {
-	res, err := db.Exec(createDb)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Println(res)
-}
-
-func (user User) add(db *sql.DB) {
-	stmt, err := db.Prepare("INSERT INTO users(username, password) VALUES(?, ?);")
-	if err != nil {
-		log.Fatal(err)
-	}
-	if _, err := stmt.Exec(user.Username, user.Password); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func (user User) delete(db *sql.DB) {
-	stmt, err := db.Prepare("DELETE FROM users WHERE id = ?;")
-	if err != nil {
-		log.Fatal(err)
-	}
-	if _, err := stmt.Exec(user.ID); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func (user *User) getById(id int, db *sql.DB) {
-	err := db.QueryRow("SELECT id, username, password FROM users WHERE id = ?;", id).Scan(&user.ID, &user.Username, &user.Password)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func (user *User) get(username string, db *sql.DB) {
-	err := db.QueryRow("SELECT id, username, password FROM users WHERE username = ?;", username).Scan(&user.ID, &user.Username, &user.Password)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func hashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
-	return string(bytes), err
-}
-
-func checkPasswordHash(password, hash string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
-}
-
-func loginHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
-	if r.Method == http.MethodPost {
-		session, err := store.Get(r, "cookie-name")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			log.Fatal(err)
-		}
-		user := &User{}
-		username := r.FormValue("username")
-		password := r.FormValue("password")
-		user.get(username, db)
-		ok := checkPasswordHash(password, user.Password)
-		if !ok {
-			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+func makeHandler(fn func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		m := validPath.FindStringSubmatch(r.URL.Path)
+		if m == nil {
+			http.NotFound(w, r)
+			log.Println("Page not found")
 			return
 		}
-		session.Values["username"] = user.Username
+		fn(w, r, m[2])
+	}
+}
+
+func homePageHandler(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, "cookie-name")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Fatal(err)
+	}
+	if r.Method == http.MethodPost {
+		username := r.FormValue("username")
+		if !validName.MatchString(username) {
+			http.Error(w, "Invalid name", http.StatusUnprocessableEntity)
+			return
+		}
+		session.Values["username"] = username
+
 		session.Save(r, w)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	err := templates.ExecuteTemplate(w, "login.html", nil)
-	if err != nil {
+	log.Println(Rooms)
+	data := make(map[string]interface{})
+	if _, ok := session.Values["username"].(string); !ok {
+		data["Authenticated"] = false
+	} else {
+		data["Authenticated"] = true
+	}
+	var chatNames []string
+	for roomName := range Rooms {
+		chatNames = append(chatNames, roomName)
+	}
+	data["Rooms"] = chatNames
+	if err := templates.ExecuteTemplate(w, "index.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Fatal(err)
 	}
 }
 
@@ -129,119 +74,86 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 	session, err := store.Get(r, "cookie-name")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Fatal(err)
+		log.Println("Session load failed")
+		return
 	}
 	delete(session.Values, "username")
 	session.Save(r, w)
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func registerHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
-	if r.Method == http.MethodPost {
-		var err error
-		user := &User{}
-		username := r.FormValue("username")
-		password1 := r.FormValue("password1")
-		password2 := r.FormValue("password2")
-		if password1 == password2 {
-			user.Username = username
-			user.Password, err = hashPassword(password1)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				log.Fatal(err)
-			}
-			user.add(db)
+func chatHandler(w http.ResponseWriter, req *http.Request, name string) {
+	session, err := store.Get(req, "cookie-name")
+	data := make(map[string]interface{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Fatal(err)
+	}
+	if _, ok := session.Values["username"].(string); !ok {
+		data["Username"] = "AnonymousUser"
+	} else {
+		data["Username"] = session.Values["username"]
+	}
+	log.Println("Entered as:", session.Values["username"])
+	log.Println("Trying to access chat: ", name)
+	data["ChatTitle"] = name
 
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+	if err := templates.ExecuteTemplate(w, "chat.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Println(err)
+	}
+}
+
+func roomCreationHandler(w http.ResponseWriter, req *http.Request) {
+	if req.Method == http.MethodPost {
+		name := req.FormValue("chatName")
+		if !validName.MatchString(name) {
+			http.Error(w, "Invalid name", http.StatusUnprocessableEntity)
 			return
 		}
-	}
-	if err := templates.ExecuteTemplate(w, "registration.html", nil); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Fatal(err)
-	}
-}
-
-func chatHandler(w http.ResponseWriter, r *http.Request) {
-	session, err := store.Get(r, "cookie-name")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Fatal(err)
-	}
-	username, ok := session.Values["username"].(string)
-	var data User
-	if ok {
-		data.Username = username
-	} else {
-		data.Username = "anon"
-	}
-	log.Println("Entered as:", username)
-	if err = templates.ExecuteTemplate(w, "chat.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Println(err)
-	}
-}
-
-func connectionHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println(err)
+		r := newRoom()
+		log.Println("Created new room")
+		Rooms[name] = r
+		go r.run()
+		http.Redirect(w, req, "/chat/"+name, http.StatusSeeOther)
 		return
 	}
-	defer conn.Close()
-
-	clients[conn] = true
-
-	for {
-		var msg Message
-		err := conn.ReadJSON(&msg)
-		if err != nil {
-			log.Println(err)
-			delete(clients, conn)
-			return
-		}
-		broadcast <- msg
-
-	}
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	log.Println("Tried to access roomCreation with", req.Method)
 }
 
-func handleMessages() {
-	for {
-		msg := <-broadcast
-
-		for client := range clients {
-			err := client.WriteJSON(msg)
-			if err != nil {
-				log.Println(err)
-				client.Close()
-				delete(clients, client)
-			}
-		}
+func connectToRoom(w http.ResponseWriter, req *http.Request, name string) {
+	log.Println(req.URL.Path)
+	log.Println("sasik")
+	r := Rooms[name]
+	socket, err := upgrader.Upgrade(w, req, nil)
+	if err != nil {
+		log.Fatal("ServeHTTP:", err)
 	}
+	client := &client{
+		socket:  socket,
+		receive: make(chan []byte, messageBufferSize),
+		room:    r,
+	}
+	r.join <- client
+	defer func() { r.leave <- client }()
+	go client.write()
+	client.read()
 }
 
 func main() {
-	db, err := sql.Open("sqlite3", file)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-	initDatabase(db)
-
 	fs := http.FileServer(http.Dir("static/"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
-	http.HandleFunc("/ws", connectionHandler)
-	go handleMessages()
-	http.HandleFunc("/", chatHandler)
-	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
-		loginHandler(w, r, db)
-	})
+	// http.HandleFunc("/ws", connectionHandler)
+	// go handleMessages()
+	// r := newRoom("sas")
 
-	http.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
-		registerHandler(w, r, db)
-	})
-
+	http.HandleFunc("/", homePageHandler)
 	http.HandleFunc("/logout", logoutHandler)
+	http.HandleFunc("/chat/", makeHandler(chatHandler))
+	http.HandleFunc("/ws/", makeHandler(connectToRoom))
+	http.HandleFunc("/create", roomCreationHandler)
+	// go r.run()
 
 	log.Println("Server started at :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
