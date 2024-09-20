@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"text/template"
 	"time"
 
@@ -100,6 +101,13 @@ func chatHandler(w http.ResponseWriter, req *http.Request, name string) {
 		data["Username"] = session.Values["username"]
 	}
 
+	if _, ok := Rooms[name]; !ok {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		// time.Sleep(3 * time.Second)
+		// http.Redirect(w, req, "/", http.StatusSeeOther)
+		return
+	}
+
 	data["History"] = chatHistory[name]
 
 	log.Println("Entered as:", session.Values["username"])
@@ -107,13 +115,6 @@ func chatHandler(w http.ResponseWriter, req *http.Request, name string) {
 
 	data["ChatTitle"] = name
 
-	go func() {
-		time.Sleep(10 * time.Second)
-		r := Rooms[name]
-		delete(Rooms, name)
-		delete(chatHistory, name)
-		r.done <- 1
-	}()
 	if err := templates.ExecuteTemplate(w, "chat.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		log.Println(err)
@@ -123,12 +124,27 @@ func chatHandler(w http.ResponseWriter, req *http.Request, name string) {
 func roomCreationHandler(w http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodPost {
 		name := req.FormValue("chatName")
+		lifespanStr := req.FormValue("lifespan")
 		if !validName.MatchString(name) {
 			http.Error(w, "Invalid name", http.StatusUnprocessableEntity)
 			return
 		}
+		lifespan, err := strconv.Atoi(lifespanStr)
+		if err != nil || lifespan < 1 {
+			http.Error(w, "Invalid integer", http.StatusBadRequest)
+			return
+		}
+
 		r := newRoom(name)
-		log.Println("Created new room")
+
+		go func() {
+			time.Sleep(time.Duration(lifespan) * time.Second)
+			delete(Rooms, name)
+			delete(chatHistory, name)
+			r.done <- 1
+		}()
+
+		log.Println("Created new room:", name)
 		Rooms[name] = r
 		go r.run()
 		http.Redirect(w, req, "/chat/"+name, http.StatusSeeOther)
