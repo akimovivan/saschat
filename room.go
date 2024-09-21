@@ -37,7 +37,6 @@ func (r *room) run() {
 			close(client.receive)
 		case msg := <-r.forward:
 			for client := range r.clients {
-				log.Println(string(msg))
 				client.receive <- msg
 			}
 		case <-r.done:

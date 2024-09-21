@@ -54,10 +54,6 @@ func homePageHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	log.Println(Rooms)
-	for _, value := range Rooms {
-		log.Println(value.clients)
-	}
 	data := make(map[string]interface{})
 	if _, ok := session.Values["username"].(string); !ok {
 		data["Authenticated"] = false
@@ -103,8 +99,6 @@ func chatHandler(w http.ResponseWriter, req *http.Request, name string) {
 
 	if _, ok := Rooms[name]; !ok {
 		http.Error(w, "Not Found", http.StatusNotFound)
-		// time.Sleep(3 * time.Second)
-		// http.Redirect(w, req, "/", http.StatusSeeOther)
 		return
 	}
 
@@ -155,8 +149,6 @@ func roomCreationHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func connectToRoom(w http.ResponseWriter, req *http.Request, name string) {
-	log.Println(req.URL.Path)
-	log.Println("sasik")
 	r := Rooms[name]
 	socket, err := upgrader.Upgrade(w, req, nil)
 	if err != nil {

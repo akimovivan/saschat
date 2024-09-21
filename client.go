@@ -26,6 +26,7 @@ func (c *client) read() {
 		var mesg Message
 		json.Unmarshal(msg, &mesg)
 		chatHistory[c.room.name] = append(chatHistory[c.room.name], mesg)
+		log.Printf(`Chat(%v) %v: "%v"`, c.room.name, mesg.Username, mesg.Message)
 		c.room.forward <- msg
 	}
 }
@@ -36,6 +37,7 @@ func (c *client) write() {
 		err := c.socket.WriteMessage(websocket.TextMessage, msg)
 		if err != nil {
 			log.Println(err)
+			return
 		}
 	}
 }
